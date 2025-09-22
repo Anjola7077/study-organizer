@@ -54,6 +54,7 @@ const App = () => {
       localStorage.setItem('theme', theme);
     } catch (e) {
       console.error('Error saving to localStorage:', e);
+      showNotification('Storage limit may have been exceeded. Consider removing some large files.', 'error');
     }
   };
 
@@ -122,24 +123,41 @@ const App = () => {
       showNotification('Please select a subject first!', 'warning');
       return;
     }
+
     const subject = subjects.get(currentSubject);
-    const newFiles = [...subject.files];
-    Array.from(files).forEach((file) => {
-      newFiles.push({
-        id: Date.now() + Math.random(),
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        url: URL.createObjectURL(file),
-        uploadedAt: new Date().toISOString(),
+
+    const uploadPromises = Array.from(files).map((file) =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          resolve({
+            id: Date.now() + Math.random(),
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            data: e.target.result,
+            uploadedAt: new Date().toISOString(),
+          });
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      })
+    );
+
+    Promise.all(uploadPromises)
+      .then((newFiles) => {
+        const updatedFiles = [...subject.files, ...newFiles];
+        const newSubjects = new Map(subjects);
+        newSubjects.set(currentSubject, { ...subject, files: updatedFiles });
+        setSubjects(newSubjects);
+        saveToStorage();
+        updateProgress(currentSubject);
+        showNotification(`${files.length} file(s) uploaded!`, 'success');
+      })
+      .catch((error) => {
+        console.error('Error uploading files:', error);
+        showNotification('Error uploading files!', 'error');
       });
-    });
-    const newSubjects = new Map(subjects);
-    newSubjects.set(currentSubject, { ...subject, files: newFiles });
-    setSubjects(newSubjects);
-    saveToStorage();
-    updateProgress(currentSubject);
-    showNotification(`${files.length} file(s) uploaded!`, 'success');
   };
 
   const deleteFile = (fileId) => {
@@ -196,6 +214,8 @@ const App = () => {
     if (command === 'createLink') {
       const url = prompt('Enter the URL');
       if (url) document.execCommand(command, false, url);
+    } else if (command === 'removeFormat') {
+      document.execCommand('removeFormat');
     } else {
       document.execCommand(command, false, null);
     }
@@ -205,6 +225,7 @@ const App = () => {
 
   const updateProgress = (subj) => {
     const subject = subjects.get(subj);
+    if (!subject) return;
     const notesLength = subject.notes?.trim().length || 0;
     const filesCount = subject.files.length;
     let completion = 0;
@@ -392,11 +413,21 @@ const App = () => {
                   input.multiple = true;
                   input.onchange = (e) => handleFileUpload(e.target.files);
                   input.click();
+                } else {
+                  showNotification('Please select a subject first!', 'warning');
                 }
               }}
-              onDragOver={(e) => e.preventDefault()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.add('dragover');
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('dragover');
+              }}
               onDrop={(e) => {
                 e.preventDefault();
+                e.currentTarget.classList.remove('dragover');
                 handleFileUpload(e.dataTransfer.files);
               }}
             >
@@ -434,7 +465,12 @@ const App = () => {
                       </div>
                     </div>
                     <div className="file-actions">
-                      <a href={file.url} download className="file-action download tooltip" data-tooltip="Download">
+                      <a
+                        href={file.data}
+                        download={file.name}
+                        className="file-action download tooltip"
+                        data-tooltip="Download"
+                      >
                         <i className="fas fa-download"></i>
                       </a>
                       <button
