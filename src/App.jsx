@@ -18,7 +18,6 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [studyStats, setStudyStats] = useState({ totalTime: 0, sessionsCompleted: 0 });
   const [focusMode, setFocusMode] = useState(false);
-  const [selectedTags, setSelectedTags] = useState(new Set());
   const [sortBy, setSortBy] = useState('date');
   const [viewMode, setViewMode] = useState('grid');
 
@@ -104,7 +103,6 @@ const App = () => {
       name: trimmedName,
       files: [],
       notes: '',
-      tags: [],
       createdAt: new Date().toISOString(),
       progress: 0,
       color: generateRandomColor(),
@@ -128,30 +126,6 @@ const App = () => {
 
   const selectSubject = (name) => {
     setCurrentSubject(name);
-  };
-
-  const addTagToSubject = (tag) => {
-    if (!currentSubject) return;
-    const subject = subjects.get(currentSubject);
-    if (!subject.tags) subject.tags = [];
-    if (!subject.tags.includes(tag)) {
-      const newSubjects = new Map(subjects);
-      newSubjects.set(currentSubject, { ...subject, tags: [...subject.tags, tag] });
-      setSubjects(newSubjects);
-      saveToStorage();
-    }
-  };
-
-  const removeTagFromSubject = (tag) => {
-    if (!currentSubject) return;
-    const subject = subjects.get(currentSubject);
-    const newSubjects = new Map(subjects);
-    newSubjects.set(currentSubject, {
-      ...subject,
-      tags: subject.tags.filter((t) => t !== tag),
-    });
-    setSubjects(newSubjects);
-    saveToStorage();
   };
 
   const generateRandomColor = () => {
@@ -181,7 +155,6 @@ const App = () => {
               size: file.size,
               data: e.target.result,
               uploadedAt: new Date().toISOString(),
-              tags: [],
             });
           };
           reader.onerror = reject;
@@ -356,7 +329,7 @@ const App = () => {
   return (
     <div className="app">
       <header className="header">
-        <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
+        <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)} title="Toggle Menu">
           <i className={`fas fa-${sidebarOpen ? 'bars' : 'xmark'}`}></i>
         </button>
         <a href="#" className="logo">
@@ -506,7 +479,7 @@ const App = () => {
                   <option value="size">Sort by Size</option>
                   <option value="name">Sort by Name</option>
                 </select>
-                <button className="view-toggle" onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}>
+                <button className="view-toggle" onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} title="Toggle View">
                   <i className={`fas fa-${viewMode === 'grid' ? 'list' : 'grip'}`}></i>
                 </button>
               </div>
