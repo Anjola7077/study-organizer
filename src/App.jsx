@@ -1,4 +1,3 @@
-// App.js
 import React, { useState, useEffect } from 'react';
 
 const App = () => {
@@ -16,6 +15,12 @@ const App = () => {
   ]);
   const [notifications, setNotifications] = useState([]);
   const [notesContent, setNotesContent] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [studyStats, setStudyStats] = useState({ totalTime: 0, sessionsCompleted: 0 });
+  const [focusMode, setFocusMode] = useState(false);
+  const [selectedTags, setSelectedTags] = useState(new Set());
+  const [sortBy, setSortBy] = useState('date');
+  const [viewMode, setViewMode] = useState('grid');
 
   useEffect(() => {
     loadFromStorage();
@@ -52,6 +57,7 @@ const App = () => {
     try {
       localStorage.setItem('sop-subjects', JSON.stringify(Array.from(subjects.entries())));
       localStorage.setItem('theme', theme);
+      localStorage.setItem('stats', JSON.stringify(studyStats));
     } catch (e) {
       console.error('Error saving to localStorage:', e);
       showNotification('Storage limit may have been exceeded. Consider removing some large files.', 'error');
@@ -68,6 +74,10 @@ const App = () => {
         if (loadedSubjects.size > 0) {
           setCurrentSubject(loadedSubjects.keys().next().value);
         }
+      }
+      const statsData = localStorage.getItem('stats');
+      if (statsData) {
+        setStudyStats(JSON.parse(statsData));
       }
     } catch (e) {
       console.error('Error loading from localStorage:', e);
@@ -94,8 +104,10 @@ const App = () => {
       name: trimmedName,
       files: [],
       notes: '',
+      tags: [],
       createdAt: new Date().toISOString(),
       progress: 0,
+      color: generateRandomColor(),
     });
     setSubjects(newSubjects);
     saveToStorage();
@@ -118,6 +130,38 @@ const App = () => {
     setCurrentSubject(name);
   };
 
+  const addTagToSubject = (tag) => {
+    if (!currentSubject) return;
+    const subject = subjects.get(currentSubject);
+    if (!subject.tags) subject.tags = [];
+    if (!subject.tags.includes(tag)) {
+      const newSubjects = new Map(subjects);
+      newSubjects.set(currentSubject, { ...subject, tags: [...subject.tags, tag] });
+      setSubjects(newSubjects);
+      saveToStorage();
+    }
+  };
+
+  const removeTagFromSubject = (tag) => {
+    if (!currentSubject) return;
+    const subject = subjects.get(currentSubject);
+    const newSubjects = new Map(subjects);
+    newSubjects.set(currentSubject, {
+      ...subject,
+      tags: subject.tags.filter((t) => t !== tag),
+    });
+    setSubjects(newSubjects);
+    saveToStorage();
+  };
+
+  const generateRandomColor = () => {
+    const colors = [
+      '#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981',
+      '#06B6D4', '#EF4444', '#6366F1', '#F97316', '#14B8A6',
+    ];
+    return colors[Math.floor(Math.random() * colors.length)];
+  };
+
   const handleFileUpload = (files) => {
     if (!currentSubject) {
       showNotification('Please select a subject first!', 'warning');
@@ -125,23 +169,24 @@ const App = () => {
     }
 
     const subject = subjects.get(currentSubject);
-
-    const uploadPromises = Array.from(files).map((file) =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          resolve({
-            id: Date.now() + Math.random(),
-            name: file.name,
-            type: file.type,
-            size: file.size,
-            data: e.target.result,
-            uploadedAt: new Date().toISOString(),
-          });
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      })
+    const uploadPromises = Array.from(files).map(
+      (file) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            resolve({
+              id: Date.now() + Math.random(),
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              data: e.target.result,
+              uploadedAt: new Date().toISOString(),
+              tags: [],
+            });
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        })
     );
 
     Promise.all(uploadPromises)
@@ -194,9 +239,10 @@ const App = () => {
 
   const handleTimerComplete = () => {
     setIsRunning(false);
-    const message = currentMode === 'focus' ? 'Time for a break!' : 'Time to focus!';
+    const newStats = { ...studyStats, sessionsCompleted: studyStats.sessionsCompleted + 1 };
+    setStudyStats(newStats);
+    const message = currentMode === 'focus' ? 'Great work! Time for a break!' : 'Break over! Ready to focus?';
     showNotification(message, 'success');
-    // Notification and sound can be added if needed
   };
 
   const saveNotes = (content) => {
@@ -229,8 +275,10 @@ const App = () => {
     const notesLength = subject.notes?.trim().length || 0;
     const filesCount = subject.files.length;
     let completion = 0;
-    if (notesLength > 0 && filesCount > 0) completion = 75;
-    else if (notesLength > 0 || filesCount > 0) completion = 50;
+    if (notesLength > 200 && filesCount > 0) completion = 100;
+    else if (notesLength > 100 || filesCount > 3) completion = 75;
+    else if (notesLength > 50 || filesCount > 1) completion = 50;
+    else if (notesLength > 0 || filesCount > 0) completion = 25;
     const newSubjects = new Map(subjects);
     newSubjects.set(subj, { ...subject, progress: completion });
     setSubjects(newSubjects);
@@ -239,6 +287,12 @@ const App = () => {
   const getProgress = () => {
     if (!currentSubject) return 0;
     return subjects.get(currentSubject)?.progress || 0;
+  };
+
+  const getTotalProgress = () => {
+    if (subjects.size === 0) return 0;
+    const total = Array.from(subjects.values()).reduce((sum, s) => sum + (s.progress || 0), 0);
+    return Math.round(total / subjects.size);
   };
 
   const showNotification = (message, type) => {
@@ -291,88 +345,128 @@ const App = () => {
     return new Date(dateString).toLocaleDateString();
   };
 
+  const sortedFiles = currentSubject
+    ? [...(subjects.get(currentSubject)?.files || [])].sort((a, b) => {
+        if (sortBy === 'date') return new Date(b.uploadedAt) - new Date(a.uploadedAt);
+        if (sortBy === 'size') return b.size - a.size;
+        return a.name.localeCompare(b.name);
+      })
+    : [];
+
   return (
     <div className="app">
       <header className="header">
+        <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
+          <i className={`fas fa-${sidebarOpen ? 'bars' : 'xmark'}`}></i>
+        </button>
         <a href="#" className="logo">
           <i className="fas fa-graduation-cap"></i>
-          Study Organizer Pro
+          <span>Study Organizer</span>
         </a>
         <div className="header-actions">
-          <button className="theme-toggle tooltip" data-tooltip="Toggle Theme" onClick={toggleTheme}>
+          <button className="focus-mode-btn" onClick={() => setFocusMode(!focusMode)} title="Focus Mode">
+            <i className={`fas ${focusMode ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+          </button>
+          <button className="theme-toggle" onClick={toggleTheme} title="Toggle Theme">
             <i className={`fas ${theme === 'light' ? 'fa-moon' : 'fa-sun'}`}></i>
           </button>
         </div>
       </header>
-      <div className="container">
-        <aside className="sidebar">
-          <div className="search-container">
-            <input
-              type="text"
-              className="search-input"
-              placeholder="Search subjects..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            <i className="fas fa-search search-icon"></i>
-          </div>
-          <h2 className="section-title">
-            <i className="fas fa-book"></i>
-            Subjects
-          </h2>
-          <ul className="subject-list">
-            {filteredSubjects.length === 0 ? (
-              <div className="empty-state">
-                <i className="fas fa-book-open"></i>
-                <h3>No subjects yet</h3>
-                <p>Add your first subject to get started</p>
+
+      <div className={`container ${focusMode ? 'focus-mode' : ''}`}>
+        {!focusMode && (
+          <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
+            <div className="search-container">
+              <input
+                type="text"
+                className="search-input"
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <i className="fas fa-search search-icon"></i>
+            </div>
+
+            <div className="stats-card">
+              <div className="stat-item">
+                <span className="stat-value">{subjects.size}</span>
+                <span className="stat-label">Subjects</span>
               </div>
-            ) : (
-              filteredSubjects.map((name) => (
-                <li
-                  key={name}
-                  className={`subject-item ${currentSubject === name ? 'active' : ''}`}
-                  onClick={() => selectSubject(name)}
-                >
-                  <span className="subject-name">{name}</span>
-                  <div className="subject-actions">
+              <div className="stat-item">
+                <span className="stat-value">{studyStats.sessionsCompleted}</span>
+                <span className="stat-label">Sessions</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-value">{getTotalProgress()}%</span>
+                <span className="stat-label">Progress</span>
+              </div>
+            </div>
+
+            <h2 className="section-title">
+              <i className="fas fa-book"></i>
+              Subjects
+            </h2>
+            <ul className="subject-list">
+              {filteredSubjects.length === 0 ? (
+                <div className="empty-state">
+                  <i className="fas fa-book-open"></i>
+                  <h3>No subjects yet</h3>
+                  <p>Add your first subject to get started</p>
+                </div>
+              ) : (
+                filteredSubjects.map((name) => (
+                  <li
+                    key={name}
+                    className={`subject-item ${currentSubject === name ? 'active' : ''}`}
+                    onClick={() => selectSubject(name)}
+                    style={{ '--subject-color': subjects.get(name)?.color }}
+                  >
+                    <div className="subject-content">
+                      <span className="subject-name">{name}</span>
+                      <div className="subject-progress-mini">
+                        <div className="progress-fill-mini" style={{ width: `${subjects.get(name)?.progress}%` }}></div>
+                      </div>
+                    </div>
                     <button
-                      className="action-btn tooltip"
-                      data-tooltip="Delete"
+                      className="action-btn"
                       onClick={(e) => {
                         e.stopPropagation();
                         deleteSubject(name);
                       }}
+                      title="Delete"
                     >
                       <i className="fas fa-trash"></i>
                     </button>
-                  </div>
-                </li>
-              ))
-            )}
-          </ul>
-          <button className="btn btn-primary" style={{ width: '100%' }} onClick={addSubject}>
-            <i className="fas fa-plus"></i>
-            Add Subject
-          </button>
-          <div className="progress-container">
-            <h3 className="section-title">
-              <i className="fas fa-chart-line"></i>
-              Study Progress
-            </h3>
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${getProgress()}%` }}></div>
+                  </li>
+                ))
+              )}
+            </ul>
+
+            <button className="btn btn-primary" style={{ width: '100%' }} onClick={addSubject}>
+              <i className="fas fa-plus"></i>
+              Add Subject
+            </button>
+
+            <div className="progress-container">
+              <h3 className="section-title">
+                <i className="fas fa-chart-line"></i>
+                Overall Progress
+              </h3>
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${getTotalProgress()}%` }}></div>
+              </div>
+              <div className="progress-text">{getTotalProgress()}% Complete</div>
             </div>
-            <div className="progress-text">{getProgress()}% Complete</div>
-          </div>
-        </aside>
-        <main className="main-content">
+          </aside>
+        )}
+
+        <main className={`main-content ${focusMode ? 'full-width' : ''}`}>
           <div className="card timer-container">
             <h2 className="section-title">
               <i className="fas fa-clock"></i>
               Focus Timer
             </h2>
-            <div className="timer-display">{formatTime()}</div>
+            <div className={`timer-display ${isRunning ? 'running' : ''}`}>{formatTime()}</div>
             <div className="timer-controls">
               <button className="btn btn-primary" onClick={startTimer} disabled={isRunning}>
                 <i className="fas fa-play"></i>
@@ -399,11 +493,25 @@ const App = () => {
               ))}
             </div>
           </div>
+
           <div className="card file-section">
-            <h2 className="section-title">
-              <i className="fas fa-folder"></i>
-              {currentSubject ? `${currentSubject} - Study Materials` : 'Study Materials'}
-            </h2>
+            <div className="file-section-header">
+              <h2 className="section-title">
+                <i className="fas fa-folder"></i>
+                {currentSubject ? `${currentSubject}` : 'Study Materials'}
+              </h2>
+              <div className="file-controls">
+                <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                  <option value="date">Sort by Date</option>
+                  <option value="size">Sort by Size</option>
+                  <option value="name">Sort by Name</option>
+                </select>
+                <button className="view-toggle" onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}>
+                  <i className={`fas fa-${viewMode === 'grid' ? 'list' : 'grip'}`}></i>
+                </button>
+              </div>
+            </div>
+
             <div
               className="file-dropzone"
               onClick={() => {
@@ -441,22 +549,23 @@ const App = () => {
                 </div>
               </div>
             </div>
-            <div className="file-grid">
+
+            <div className={`file-grid ${viewMode}`}>
               {!currentSubject ? (
                 <div className="empty-state">
                   <i className="fas fa-folder-open"></i>
                   <h3>Select a subject</h3>
                   <p>Choose a subject to view and manage files</p>
                 </div>
-              ) : subjects.get(currentSubject)?.files.length === 0 ? (
+              ) : sortedFiles.length === 0 ? (
                 <div className="empty-state">
                   <i className="fas fa-file-plus"></i>
                   <h3>No files yet</h3>
                   <p>Upload your study materials to get started</p>
                 </div>
               ) : (
-                subjects.get(currentSubject)?.files.map((file) => (
-                  <div key={file.id} className="file-card">
+                sortedFiles.map((file) => (
+                  <div key={file.id} className={`file-card ${viewMode}`}>
                     <img src={getFileIcon(file.name)} alt={file.name} className="file-thumbnail" />
                     <div className="file-info">
                       <div className="file-name">{file.name}</div>
@@ -468,15 +577,15 @@ const App = () => {
                       <a
                         href={file.data}
                         download={file.name}
-                        className="file-action download tooltip"
-                        data-tooltip="Download"
+                        className="file-action download"
+                        title="Download"
                       >
                         <i className="fas fa-download"></i>
                       </a>
                       <button
-                        className="file-action delete tooltip"
-                        data-tooltip="Delete"
+                        className="file-action delete"
                         onClick={() => deleteFile(file.id)}
+                        title="Delete"
                       >
                         <i className="fas fa-trash"></i>
                       </button>
@@ -486,43 +595,42 @@ const App = () => {
               )}
             </div>
           </div>
+
           <div className="card notes-section">
             <h2 className="section-title">
               <i className="fas fa-edit"></i>
               Notes
             </h2>
             <div className="editor-toolbar">
-              <button className="editor-btn tooltip" data-tooltip="Bold" onClick={() => executeCommand('bold')}>
+              <button className="editor-btn" onClick={() => executeCommand('bold')} title="Bold">
                 <i className="fas fa-bold"></i>
               </button>
-              <button className="editor-btn tooltip" data-tooltip="Italic" onClick={() => executeCommand('italic')}>
+              <button className="editor-btn" onClick={() => executeCommand('italic')} title="Italic">
                 <i className="fas fa-italic"></i>
               </button>
-              <button className="editor-btn tooltip" data-tooltip="Underline" onClick={() => executeCommand('underline')}>
+              <button className="editor-btn" onClick={() => executeCommand('underline')} title="Underline">
                 <i className="fas fa-underline"></i>
               </button>
+              <div className="toolbar-divider"></div>
               <button
-                className="editor-btn tooltip"
-                data-tooltip="Bullet List"
+                className="editor-btn"
                 onClick={() => executeCommand('insertUnorderedList')}
+                title="Bullet List"
               >
                 <i className="fas fa-list-ul"></i>
               </button>
               <button
-                className="editor-btn tooltip"
-                data-tooltip="Numbered List"
+                className="editor-btn"
                 onClick={() => executeCommand('insertOrderedList')}
+                title="Numbered List"
               >
                 <i className="fas fa-list-ol"></i>
               </button>
-              <button className="editor-btn tooltip" data-tooltip="Insert Link" onClick={() => executeCommand('createLink')}>
+              <button className="editor-btn" onClick={() => executeCommand('createLink')} title="Insert Link">
                 <i className="fas fa-link"></i>
               </button>
-              <button
-                className="editor-btn tooltip"
-                data-tooltip="Clear Formatting"
-                onClick={() => executeCommand('removeFormat')}
-              >
+              <div className="toolbar-divider"></div>
+              <button className="editor-btn" onClick={() => executeCommand('removeFormat')} title="Clear Formatting">
                 <i className="fas fa-remove-format"></i>
               </button>
             </div>
@@ -536,10 +644,22 @@ const App = () => {
           </div>
         </main>
       </div>
-      <div id="notification-container" style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 9999 }}>
+
+      <div id="notification-container">
         {notifications.map((notif) => (
           <div key={notif.id} className={`notification ${notif.type} show`}>
-            {notif.message}
+            <div className="notification-icon">
+              <i
+                className={`fas fa-${
+                  notif.type === 'success'
+                    ? 'check-circle'
+                    : notif.type === 'error'
+                      ? 'exclamation-circle'
+                      : 'info-circle'
+                }`}
+              ></i>
+            </div>
+            <span>{notif.message}</span>
           </div>
         ))}
       </div>
